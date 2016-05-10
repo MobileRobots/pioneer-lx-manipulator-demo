@@ -1,3 +1,8 @@
+ifdef EMULATOR
+KINOVA_INCLUDE_DIR:=../emulate-kinova-api/headers.50200
+KINOVA_LINK:=-L../emulate-kinova-api -l:emulate_kinova_50200.so
+endif
+
 ifndef KINOVA_INCLUDE_DIR
 KINOVA_INCLUDE_DIR:=/usr/include
 endif
