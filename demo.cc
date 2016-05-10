@@ -238,6 +238,7 @@ void ptu_look_at_arm(ArPTZ& ptu, float x, float y, float z)
   float p, t;
 
   // probably can reduce this to avoid if conditions
+
   if(fabs(x) <= ArMath::epsilon())
     p = 0;
   else if (x < 0) // to the right, pan should be positive
@@ -314,11 +315,14 @@ void armEENetDrawingCallback(ArServerClient *client, ArNetPacket *pkt)
   for(int i = 0; i < armCount; ++i)
   {
     currentArmPositionMutex[i].lock();
-    const float px = currentArmPositions[i].Coordinates.X;
-    const float py = currentArmPositions[i].Coordinates.Y;
+    float ax = currentArmPositions[i].Coordinates.X;
+    float ay = currentArmPositions[i].Coordinates.Y;
     currentArmPositionMutex[i].unlock();
-    reply.byte4ToBuf( -1*armOffset[i].y + -1*py);    // robot X == arm -Y
-    reply.byte4ToBuf( -1*armOffset[i].x + -1*px);    // robot Y == arm -X
+    int rx = 1000.0 * (-1*armOffset[i].y + -1*ay);    // arm -Y m -> robot X mm
+    int ry = 1000.0 * (-1*armOffset[i].x + -1*ax);    // arm -X m -> robot Y mm 
+  printf("arm pos %d = %d, %d\n", i, rx, ry);
+    reply.byte4ToBuf(rx);
+    reply.byte4ToBuf(ry);
   }
   client->sendPacketUdp(&reply);
 }
