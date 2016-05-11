@@ -27,7 +27,7 @@ all: demo Example_CartesianControl
 clean: 
 	-rm demo
 
-demo: demo.cc 
+demo: demo.cc ArnlASyncTask.h
 	$(CXX) -fPIC -g -o $@ -I$(KINOVA_INCLUDE_DIR) $(ARIA_INCLUDE) $< $(KINOVA_LINK) $(ARIA_LINK)
 
 Example_CartesianControl: Example_CartesianControl.cpp
