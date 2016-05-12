@@ -27,8 +27,8 @@ all: demo Example_CartesianControl
 clean: 
 	-rm demo
 
-demo: demo.cc ArnlASyncTask.h
-	$(CXX) -fPIC -g -o $@ -I$(KINOVA_INCLUDE_DIR) $(ARIA_INCLUDE) $< $(KINOVA_LINK) $(ARIA_LINK)
+demo: demo.cc ArmDemoTask.cpp ArmDemoTask.h RemoteArnlTask.h 
+	$(CXX) -fPIC -g -o $@ -I$(KINOVA_INCLUDE_DIR) $(ARIA_INCLUDE) $^ $(KINOVA_LINK) $(ARIA_LINK)
 
 Example_CartesianControl: Example_CartesianControl.cpp
 	$(CXX) -fPIC -g -o $@ -I$(KINOVA_INCLUDE_DIR) $< $(KINOVA_LINK) -ldl

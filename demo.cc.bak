@@ -4,13 +4,11 @@
 #include <stdio.h>
 #include <signal.h>
 #include <math.h>
-
 #include "Aria.h"
+#include "ArSystemStatus.h"
 #include "ArNetworking.h"
-#include "RemoteArnlTask.h"
-#include "ArClientHandlerRobotUpdate.h"
-
-#include "ArmDemoTask.h"
+#include "ArVideo.h"
+#include "ArnlASyncTask.h"
 
 namespace Kinova {
 #include "Kinova.API.CommLayerUbuntu.h"
@@ -18,21 +16,49 @@ namespace Kinova {
 #include "KinovaTypes.h"
 };
 
+typedef enum {
+  CartesianVel,
+  CartesianPos,
+  Reactive,
+  Idle
+} DemoMode;
 
-ArmDemoTask::ArmDemoTask(ArClientBase *client, ArPTZ * _ptu) :
-  RemoteArnlTask("ArmDemo", client, NULL),
-  DEFAULT_MODE(CartesianPos),
-  demoDone(false),
-  demoWaitingToFinish(false),
-  numDemoCartesianVelocities(0),
-  numDemoCartesianPositions(0),
-  armCount(0),
-  ptu(_ptu)
-{
-  init_demo();
-}
+const DemoMode DEFAULT_MODE  = CartesianPos;
+bool demoDone = false;
+bool demoWaitingToFinish = false;
+ArTime demoTime;
 
-void ArmDemoTask::clear_all_arm_trajectories()
+
+// These are initialized in init_demo():
+DemoMode demoMode;
+Kinova::CartesianInfo demoCartesianVelocities[12];
+int numDemoCartesianVelocities = 0;
+Kinova::TrajectoryPoint demoTrajectoryCommand;
+Kinova::CartesianInfo demoCartesianPositions[12];
+int numDemoCartesianPositions = 0;
+Kinova::TrajectoryPoint demoPositionCommand;
+
+
+#define MAX_ARMS 2
+#define LEFT 0
+#define RIGHT 1
+Kinova::KinovaDevice armList[MAX_ARMS];
+int armCount = 0;
+
+typedef struct {
+  float x;
+  float y;
+  float z;
+} PosData;
+PosData armOffset[MAX_ARMS]; // in arm coordinate system but relative to PTU
+
+Kinova::CartesianPosition currentArmPositions[MAX_ARMS];
+ArMutex currentArmPositionMutex[MAX_ARMS];
+
+float panoffset = 0;   // offset of rotation point of pan joint on X axis (left/right)
+float tiltoffset = 0;  // offset of rotation point of tilt joint on Z axis (up/down)
+
+void clear_all_arm_trajectories()
 {
   for(int i = 0; i < armCount; ++i)
   { 
@@ -42,7 +68,7 @@ void ArmDemoTask::clear_all_arm_trajectories()
   puts("Cleared old arm trajectory commands.");
 }
 
-void ArmDemoTask::set_demo_mode(DemoMode newMode)
+void set_demo_mode(DemoMode newMode)
 {
   DemoMode oldMode = demoMode;
 
@@ -71,7 +97,7 @@ void ArmDemoTask::set_demo_mode(DemoMode newMode)
   clear_all_arm_trajectories();
 }
 
-void ArmDemoTask::set_pose(Kinova::CartesianInfo& pos, float px, float py, float pz, float ox, float oy, float oz)
+void set_pose(Kinova::CartesianInfo& pos, float px, float py, float pz, float ox, float oy, float oz)
 {
   pos.X = px;
   pos.Y = py;
@@ -81,7 +107,7 @@ void ArmDemoTask::set_pose(Kinova::CartesianInfo& pos, float px, float py, float
   pos.ThetaZ = oz;
 }
 
-void ArmDemoTask::print_user_position(Kinova::UserPosition& p)
+void print_user_position(Kinova::UserPosition& p)
 {
   if(p.Type == Kinova::CARTESIAN_POSITION)
     printf("CartesianPosition: Position: (%f, %f, %f), Orientation: (%f, %f, %f), Fingers: (%f, %f, %f)\n",
@@ -96,25 +122,25 @@ void ArmDemoTask::print_user_position(Kinova::UserPosition& p)
   /// todo angular pos
 }
 
-void ArmDemoTask::set_fingers(Kinova::FingersPosition& f, float f1, float f2, float f3)
+void set_fingers(Kinova::FingersPosition& f, float f1, float f2, float f3)
 {
   f.Finger1 = f1;
   f.Finger2 = f2;
   f.Finger3 = f3;
 }
 
-void ArmDemoTask::set_fingers_open(Kinova::FingersPosition& f)
+void set_fingers_open(Kinova::FingersPosition& f)
 {
   f.Finger1 = f.Finger2 = f.Finger3 = 0;
 }
 
-void ArmDemoTask::set_fingers_closed(Kinova::FingersPosition& f)
+void set_fingers_closed(Kinova::FingersPosition& f)
 {
   f.Finger1 = f.Finger2 = 4000;
   f.Finger3 = 3700;
 }
 
-void ArmDemoTask::init_demo()
+void init_demo()
 {
   set_demo_mode(DEFAULT_MODE);
 
@@ -148,17 +174,15 @@ void ArmDemoTask::init_demo()
 }
   
 
-/*
-void ArmDemoTask::close_arms_and_exit()
+void close_arms_and_exit()
 {
   puts("Closing Kinova API and exiting...");
   Kinova::CloseAPI();
   Aria::exit(0);
 }
-*/
 
 
-void ArmDemoTask::rehome_all_arms()
+void rehome_all_arms()
 {
   printf("\nRehoming all %d arms... ", armCount); fflush(stdout);
   for(int i = 0; i < armCount; ++i)
@@ -171,7 +195,6 @@ void ArmDemoTask::rehome_all_arms()
   puts(""); fflush(stdout);
 }
 
-/*
 void toggle_mode()
 {
   if(demoMode == CartesianPos)
@@ -180,26 +203,77 @@ void toggle_mode()
     set_demo_mode(CartesianPos);
 }
 
-*/
 
-/*
-void ArmDemoTask::rehome_signal_handler(int signum)
+void rehome_signal_handler(int signum)
 {
   rehome_all_arms();
 }
 
-void ArmDemoTask::mode_signal_handler(int signum)
+void mode_signal_handler(int signum)
 {
   toggle_mode();
 }
 
 
-*/
+// quick hack to look at where the end effector is. 
+// * x, y and z are arm end effector position in arm coordinate system (-y // forward, +y back, +z up, -z down, -x right, +x left)
+// * xoffset, yoffset and zoffset are position of camera relative to arm base  (coordinate system origin)
+// * xoffset should be negative for an arm on the right side of the camera,
+// positive for left arm.
+// * yoffset should be positive if camera is behind arm bases, negative if in
+// front.
+// * zoffset should be positive if camera is mounted higher than arm bases,
+// negative if lower.
 
+void ptu_look_at_arm(ArPTZ& ptu, float x, float y, float z)
+{
+ //   todo also include vertical offset of ptu stage from middle of tilt joint
+  if (y < 0)
+    y *= -1;   // negative y is forwards, use that, otherwise ignore if behind
+  else
+  {
+    ptu.panTilt(0, 0);
+    return;   // behind camera
+  }
+
+  float p, t;
+
+  // probably can reduce this to avoid if conditions
+
+  if(fabs(x) <= ArMath::epsilon())
+    p = 0;
+  else if (x < 0) // to the right, pan should be positive
+    p = 90.0 - ArMath::radToDeg( atan(y/(-x)) );
+  else            // to the left, pan should be negative side 
+    p = -1.0 * (90.0 - ArMath::radToDeg( atan(y/x) ) ) ;
+
+  if(fabs(z) <= ArMath::epsilon())
+    t = 0;
+  else if (z < 0) // down, tilt should be negative 
+    t = -1.0 * (90.0 - ArMath::radToDeg( atan((-z)/y) ) );
+  else            // up, tilt should be positive
+    t = 90.0 - ArMath::radToDeg( atan(z/y) );
+
+  //printf("pan atan ( %.2f / %.2f ) = %.2f\n", y, x, atan(y/x));
+  //printf("tilt atan ( %.2f / %.2f ) = %.2f\n", y, z, atan(y/z)); 
+  //printf("ptu lookat: pos [%.2f, %.2f, %.2f] -> raw angles [%.2f, %.2f].\n", x, y, z, p, t);
+  //puts("applying limits...");
+  // stay away from limits:
+  if(p >= ptu.getMaxPosPan() )
+    p = ptu.getMaxPosPan() - 1;
+  else if(p <= ptu.getMaxNegPan() )
+    p = ptu.getMaxNegPan() + 1;
+  if(t >= ptu.getMaxPosTilt() )
+    t = ptu.getMaxPosTilt() - 1;
+  else if(t <= ptu.getMaxNegTilt() )
+    t = ptu.getMaxNegTilt() + 1;
+  printf("[ptu lookat: pan %.2f, tilt %.2f] ", p, t);
+  ptu.panTilt(p, t);
+}
 
 
 /*
-void ArmDemoTask::setup_torso_protection_zone_for_left_arm()
+void setup_torso_protection_zone_for_left_arm()
 {
   Kinova::ZoneList zones;
   zones.NbZones = 1;  // todo add second zone for kinect and third for robot base
@@ -225,7 +299,7 @@ void ArmDemoTask::setup_torso_protection_zone_for_left_arm()
   Kinova::SetProtectionZone(zones);
 }
 
-void ArmDemoTask::setup_torso_protection_zone_for_right_arm()
+void setup_torso_protection_zone_for_right_arm()
 {
   Kinova::ZoneList zones;
 
@@ -235,7 +309,7 @@ void ArmDemoTask::setup_torso_protection_zone_for_right_arm()
 */
 
 
-void ArmDemoTask::armEENetDrawingCallback(ArServerClient *client, ArNetPacket *pkt)
+void armEENetDrawingCallback(ArServerClient *client, ArNetPacket *pkt)
 {
   ArNetPacket reply;
   reply.byte4ToBuf(armCount);
@@ -247,7 +321,7 @@ void ArmDemoTask::armEENetDrawingCallback(ArServerClient *client, ArNetPacket *p
     currentArmPositionMutex[i].unlock();
     int rx = 1000.0 * (-1*armOffset[i].y + -1*ay);    // arm -Y m -> robot X mm
     int ry = 1000.0 * (-1*armOffset[i].x + -1*ax);    // arm -X m -> robot Y mm 
-//  printf("arm pos %d = %d, %d\n", i, rx, ry);
+  printf("arm pos %d = %d, %d\n", i, rx, ry);
     reply.byte4ToBuf(rx);
     reply.byte4ToBuf(ry);
   }
@@ -256,12 +330,36 @@ void ArmDemoTask::armEENetDrawingCallback(ArServerClient *client, ArNetPacket *p
 
 
 
-
-bool ArmDemoTask::init_arms()
+int main(int argc, char **argv)
 {
+
+  Aria::init();
+  ArVideo::init();
+
+  ArArgumentParser argParser(&argc, argv);
+
+  ArPTZConnector ptzConnector(&argParser, NULL);
+  ArServerBase server;
+  ArServerSimpleOpener openServer(&argParser);
+
+  argParser.loadDefaultArguments();
+
+  if(!Aria::parseArgs())
+  {
+    puts("error parsing args");
+    Aria::exit(3);
+  }
+
+  if(!argParser.checkHelp())
+  {
+    Aria::logOptions();
+    Aria::exit(0);
+  }
+
   /* Connect to Arms */
 
   int result;
+//  Kinova::CartesianPosition position;
   Kinova::AngularPosition torqueData; 
 
   result = Kinova::InitAPI();
@@ -269,16 +367,16 @@ bool ArmDemoTask::init_arms()
   if(result != 1)
   {
     std::cout << "Warning: error initializing arms!" << std::endl;
-    return false;
+    Aria::exit(1);
   }
-//  Aria::addExitCallback(new ArGlobalFunctor(&close_arms_and_exit));
+  Aria::addExitCallback(new ArGlobalFunctor(&close_arms_and_exit));
 
 
   armCount = Kinova::GetDevices(armList, result);
   std::cout << "Found " << armCount << " arms" << std::endl;
 
   if(armCount <= 0)
-    return false;
+    Aria::exit(2);
 
   if(armCount > MAX_ARMS)
   {
@@ -292,6 +390,27 @@ bool ArmDemoTask::init_arms()
     Kinova::InitFingers();
   }
 
+  signal(SIGUSR1, rehome_signal_handler);
+  signal(SIGUSR2, mode_signal_handler);
+
+  
+  /* Connect to PTU */
+
+  ptzConnector.connect();
+  printf("Found %lu PTUs/cameras\n", ptzConnector.getNumPTZs());
+  if(ptzConnector.getNumPTZs() <= 0)
+    Aria::exit(3);
+
+  ArPTZ* ptu = ptzConnector.getPTZ(0);
+  if(!ptu)
+  {
+    puts("no PTU");
+    Aria::exit(4);
+  }
+  printf("PTU pan limits (%f, %f) tilt limits (%f, %f)\n",
+    ptu->getMinPan(), ptu->getMaxPan(), 
+    ptu->getMinTilt(), ptu->getMaxTilt() );
+
   // set up arm positions vs. camera, using arm axes, meters
   // so: arm below camera is -z, arm above camera is +z
   // arm behind camera is +y, arm in front of camera is -y
@@ -302,65 +421,116 @@ bool ArmDemoTask::init_arms()
   armOffset[RIGHT].x = -0.1;
   armOffset[RIGHT].y = 0;// 0.1;
   armOffset[RIGHT].z = 0;// -0.1;
-  // TODO move to call from main
 
-  return true;
-}
+  // test lookat:
+/*
+  printf("TEST PANTILT\npan left %f\n", -45.0);
+  ptu->panTilt(-45, 0);
+  ArUtil::sleep(5000);
+  printf("pan right %f\n", 45.0);
+  ptu->panTilt(45, 0);
+  ArUtil::sleep(5000);
+  printf("tilt up %f\n", 45.0);
+  ptu->panTilt(0, 45);
+  ArUtil::sleep(5000);
+  printf("tilt down -20\n");
+  ptu->panTilt(0, -20);
+*/
+/*
+  puts("TEST LOOKAT");
+  ArUtil::sleep(5000);
+  puts("straigt ahead");
+  ptu_look_at_arm(*ptu, 0+armOffset[LEFT].x, -1+armOffset[LEFT].y, 0+armOffset[LEFT].z);
+  puts("");
+  ArUtil::sleep(5000);
+  puts("left");
+  ptu_look_at_arm(*ptu, 1+armOffset[LEFT].x, -1+armOffset[LEFT].y, 0+armOffset[LEFT].z);
+  puts("");
+  ArUtil::sleep(5000);
+  puts("right");
+  ptu_look_at_arm(*ptu, -1+armOffset[LEFT].x, -1+armOffset[LEFT].y, 0+armOffset[LEFT].z);
+  puts("");
+  ArUtil::sleep(5000);
+  puts("up right");
+  ptu_look_at_arm(*ptu, -1+armOffset[LEFT].x, -1+armOffset[LEFT].y, 1+armOffset[LEFT].z);
+  puts("");
+  ArUtil::sleep(5000);
+  puts("down left");
+  ptu_look_at_arm(*ptu, 1+armOffset[LEFT].x, -1+armOffset[LEFT].y, -1+armOffset[LEFT].z);
+  puts("");
+  ArUtil::sleep(5000);
+  puts("down right");
+  ptu_look_at_arm(*ptu, -1+armOffset[LEFT].x, -1+armOffset[LEFT].y, -1+armOffset[LEFT].z);
+  puts("");
+  ArUtil::sleep(5000);
+  puts("up left");
+  ptu_look_at_arm(*ptu, 1+armOffset[LEFT].x, -1+armOffset[LEFT].y, 1+armOffset[LEFT].z);
+  puts("");
+  ArUtil::sleep(5000);
+  Aria::exit(0);
+*/
 
 
-void ArmDemoTask::touringToGoal(const GoalInfo& g)
-{
-  puts("ArmDemoTask: touring to a goal");
-  // No way to know when we've arrived at a goal, because touring doesn't stop.
-  // So if we're touring to an Arm Demo goal, then use regular go to goal
-  // instead.
-  if(g.checkNamePrefix("Arm Demo"))
-    requestGoToGoal(g.name);
- } 
-    
+  /* Set up ArNetworking */
+  ArServerHandlerCommands commandsServer(&server);
+ 
+#ifndef WIN32
+  ArServerFileLister fileLister(&server, ".");
+  ArServerFileToClient fileToClient(&server, ".");
+  ArServerDeleteFileOnServer deleteFileOnServer(&server, ".");
+#endif
+   
+  ArServerInfoStrings stringInfoServer(&server);
 
-void ArmDemoTask::goalReached(const GoalInfo& g)
-{
-  if(g.checkNamePrefix("Arm Demo"))
+  Aria::getInfoGroup()->addAddStringCallback(stringInfoServer.getAddStringFunctor());
+  ArSystemStatus::startPeriodicUpdate(); 
+  Aria::getInfoGroup()->addStringDouble(
+     "CPU Use", 10, ArSystemStatus::getCPUPercentFunctor(), "% 4.0f%%");
+ //  Aria::getInfoGroup()->addStringUnsignedLong(
+ //    "Computer Uptime", 14, ArSystemStatus::getUptimeFunctor());
+ //  Aria::getInfoGroup()->addStringUnsignedLong(
+ //    "Program Uptime", 14, ArSystemStatus::getProgramUptimeFunctor());
+  Aria::getInfoGroup()->addStringInt(
+     "Wireless Link Quality", 9, ArSystemStatus::getWirelessLinkQualityFunctor(), "%d");
+  Aria::getInfoGroup()->addStringInt(
+     "Wireless Noise", 10, ArSystemStatus::getWirelessLinkNoiseFunctor(), "%d");
+  Aria::getInfoGroup()->addStringInt(
+     "Wireless Signal", 10, ArSystemStatus::getWirelessLinkSignalFunctor(), "%d");
+  ArServerHandlerCommMonitor commMonitorServer(&server);
+
+  ArServerInfoDrawings drawingsServer(&server);
+  drawingsServer.addDrawing(
+    new ArDrawingData("polyDots", ArColor(255, 0, 0), 10, 50), "armEE",
+    new ArGlobalFunctor2<ArServerClient*, ArNetPacket*>(&armEENetDrawingCallback));
+
+  printf("opening ArNetworking server...\n");
+  if(!openServer.open(&server))
   {
-    runDemo();
-    getClient()->requestOnce("tourGoals");
+    std::cout << "error opening ArNetworking server" << std::endl;
+    Aria::exit(5);
+    return 5;
   }
-}
+  server.runAsync();
+  std::cout << "ArNetworking server running on port " << server.getTcpPort() << std::endl;
 
-void ArmDemoTask::armDemoDone()
-{
-  // TODO park arms
-  puts("arm demo done");
-}
 
-void ArmDemoTask::runDemo() 
-{
+  /* Init demo */
+  init_demo();
+
+
   /* Run */
-
-
-  // TODO put right arm somewhere.
 
   Kinova::SetActiveDevice(armList[LEFT]);
   int i = LEFT;
 
-  demoDone = false;
-  demoTime.setToNow();
   puts("Running...");
   while(true)
   {
-    if(demoDone)
+    // do demo arm control:
+    if(!demoDone)
     {
-      armDemoDone();
-      return;
-    }
 
-    if(demoWaitingToFinish)
-    {
-      puts("arm demo waiting");
-    }
-
-    {
+        
       if(demoMode == CartesianVel)
       {
         if(demoTime.secSince() >= 40) 
@@ -432,7 +602,6 @@ void ArmDemoTask::runDemo()
       const float oz = currentArmPositions[i].Coordinates.ThetaZ;
       currentArmPositionMutex[i].unlock();
 
-      Kinova::AngularPosition torqueData;
       Kinova::GetAngularForce(torqueData);
       std::vector<float> jointTorques(6);
       jointTorques[0] = torqueData.Actuators.Actuator1;
@@ -455,12 +624,10 @@ void ArmDemoTask::runDemo()
 
       if(i == 0 && ptu != NULL)
       {
-        ptu_look_at(px+armOffset[i].x, py+armOffset[i].y, pz+armOffset[i].z);
+        ptu_look_at_arm(*ptu, px+armOffset[i].x, py+armOffset[i].y, pz+armOffset[i].z);
       }
 
     }
-
-    printf(" [dt=%lds]", demoTime.secSince());
 
     printf("\r");
     fflush(stdout);
@@ -468,72 +635,9 @@ void ArmDemoTask::runDemo()
     ArUtil::sleep(500);
     
 	}
-}
  
-ArmDemoTask::~ArmDemoTask()
-{
 
   Kinova::CloseAPI();
 
-}
-
-/** quick hack to look at where the end effector is. 
- * x, y and z are arm end effector position in arm coordinate system (-y // forward, +y back, +z up, -z down, -x right, +x left)
- * xoffset, yoffset and zoffset are position of camera relative to arm base  (coordinate system origin)
- * xoffset should be negative for an arm on the right side of the camera,
- positive for left arm.
- * yoffset should be positive if camera is behind arm bases, negative if in
- front.
- * zoffset should be positive if camera is mounted higher than arm bases,
- negative if lower.
-*/
-void ArmDemoTask::ptu_look_at(float x, float y, float z)
-{
-  if(!ptu)
-    return;
-
- //   todo also include vertical offset of ptu stage from middle of tilt joint,
- //   and offset of tilt joint from pan joint if any.
-
-  if (y < 0)
-    y *= -1;   // negative y is forwards, use that, otherwise ignore if behind
-  else
-  {
-    ptu->panTilt(0, 0);
-    return;   // behind camera
-  }
-
-  float p, t;
-
-  // probably can reduce this to avoid if conditions
-
-  if(fabs(x) <= ArMath::epsilon())
-    p = 0;
-  else if (x < 0) // to the right, pan should be positive
-    p = 90.0 - ArMath::radToDeg( atan(y/(-x)) );
-  else            // to the left, pan should be negative side 
-    p = -1.0 * (90.0 - ArMath::radToDeg( atan(y/x) ) ) ;
-
-  if(fabs(z) <= ArMath::epsilon())
-    t = 0;
-  else if (z < 0) // down, tilt should be negative 
-    t = -1.0 * (90.0 - ArMath::radToDeg( atan((-z)/y) ) );
-  else            // up, tilt should be positive
-    t = 90.0 - ArMath::radToDeg( atan(z/y) );
-
-  //printf("pan atan ( %.2f / %.2f ) = %.2f\n", y, x, atan(y/x));
-  //printf("tilt atan ( %.2f / %.2f ) = %.2f\n", y, z, atan(y/z)); 
-  //printf("ptu lookat: pos [%.2f, %.2f, %.2f] -> raw angles [%.2f, %.2f].\n", x, y, z, p, t);
-  //puts("applying limits...");
-  // stay away from limits:
-  if(p >= ptu->getMaxPosPan() )
-    p = ptu->getMaxPosPan() - 1;
-  else if(p <= ptu->getMaxNegPan() )
-    p = ptu->getMaxNegPan() + 1;
-  if(t >= ptu->getMaxPosTilt() )
-    t = ptu->getMaxPosTilt() - 1;
-  else if(t <= ptu->getMaxNegTilt() )
-    t = ptu->getMaxNegTilt() + 1;
-  printf("[ptu lookat: pan %.2f, tilt %.2f] ", p, t);
-  ptu->panTilt(p, t);
+	Aria::exit(0);
 }

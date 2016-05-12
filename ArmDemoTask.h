@@ -1,13 +1,10 @@
 #ifndef ARMDEMOTASK_H
 #define ARMDEMOTASK_H
 
-#include <iostream>
-#include <vector>
-#include <stdio.h>
-#include <signal.h>
-#include <math.h>
 #include "Aria.h"
-#include "RemoteArnlASyncTask.h"
+#include "ArNetworking.h"
+#include "RemoteArnlTask.h"
+#include "ArClientHandlerRobotUpdate.h"
 
 namespace Kinova {
 #include "Kinova.API.CommLayerUbuntu.h"
@@ -26,31 +23,32 @@ typedef enum {
 #define LEFT 0
 #define RIGHT 1
 
-class ArmDemoTask: public virtual RemoteArnlASyncTask()
+/** Call init_arms() to connect to arms */
+class ArmDemoTask: public virtual RemoteArnlTask
 {
 public:
-  ArmDemoTask() : ArnlASyncTask(
+  ArmDemoTask(ArClientBase *client, ArPTZ *ptu = NULL);
 
 
 private:
-  const DemoMode DEFAULT_MODE  = CartesianPos;
-  bool demoDone = false;
-  bool demoWaitingToFinish = false;
+  const DemoMode DEFAULT_MODE;
+  bool demoDone;
+  bool demoWaitingToFinish;
   ArTime demoTime;
 
 
   // These are initialized in init_demo():
   DemoMode demoMode;
   Kinova::CartesianInfo demoCartesianVelocities[12];
-  int numDemoCartesianVelocities = 0;
+  int numDemoCartesianVelocities;
   Kinova::TrajectoryPoint demoTrajectoryCommand;
   Kinova::CartesianInfo demoCartesianPositions[12];
-  int numDemoCartesianPositions = 0;
+  int numDemoCartesianPositions;
   Kinova::TrajectoryPoint demoPositionCommand;
 
 
   Kinova::KinovaDevice armList[MAX_ARMS];
-  int armCount = 0;
+  int armCount;
 
   typedef struct {
     float x;
@@ -62,15 +60,19 @@ private:
   Kinova::CartesianPosition currentArmPositions[MAX_ARMS];
   ArMutex currentArmPositionMutex[MAX_ARMS];
 
+  ArPTZ *ptu;
 
 
 public:
-  void init_demo();
   bool init_arms();
   void set_demo_mode(DemoMode newMode);
   void rehome_all_arms();
+  void ptu_look_at(float x, float y, float z);
+  virtual ~ArmDemoTask();
+  void armEENetDrawingCallback(ArServerClient *client, ArNetPacket *pkt);
 
 private:
+  void init_demo();
   void clear_all_arm_trajectories();
   void set_pose(Kinova::CartesianInfo& pos, float px, float py, float pz, float ox, float oy, float oz);
   void print_user_position(Kinova::UserPosition& p);
@@ -79,9 +81,10 @@ private:
   void set_fingers_closed(Kinova::FingersPosition& f);
   void setup_torso_protection_zone_for_left_arm();
   void setup_torso_protection_zone_for_right_arm();
-  void armEENetDrawingCallback(ArServerClient *client, ArNetPacket *pkt);
-  virtual void runTask();
-  virtual ~ArmDemo();
+  void runDemo();
+  void armDemoDone();
+  virtual void goalReached(const GoalInfo& g);
+  virtual void touringToGoal(const GoalInfo& g);
 };
 
 #endif

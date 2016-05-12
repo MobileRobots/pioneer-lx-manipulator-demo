@@ -1,14 +1,14 @@
-#ifndef ARNLASYNCTASK_H
-#define ARNLASYNCTASK_H
+#ifndef REMOTEARNLTASK_H
+#define REMOTEARNLTASK_H
 
 #include "Aria.h"
 #include "ArNetworking.h"
-#include "Arnl.h"
-#include "ArPathPlanningTask.h"
+#include "ArClientHandlerRobotUpdate.h"
 
 
-/** When a remote ARNL server reaches a goal, call a user-supplied virtual
- * method
+/** Monitor status of ARNL server and call a user-supplied virtual method based
+    on status changed such as reaching a goal or failing to reach a goal.  
+    Use this to perform some action based on these events.
 
   To define a task for your application, create a subclass of this class..
   This subclass should override the virtual getName() and goalReached() methods.
@@ -17,6 +17,16 @@
   such that it will not be deleted for the duration of the process. For example,
   you could create it in your program's main() function, or allocate it with
   <tt>new</tt>.
+
+  You can run this status monitor in a new thread by calling runAsync().  
+  Handler methods such as goalReached(), goalFailed()
+  etc. are called in this thread, so you can perform long running work in them.
+  If the status changes before your handler method returns, a new one will be
+  called but there is not currently a history or queue of events, only the most 
+  recent status change is handled. (This may be changed in the future.)
+
+  Or, instead of running in a new thread, you can call checkStatus() from your
+  own program loop.
 
   C++ Code Example:
 
@@ -42,52 +52,71 @@
       ArLog::log(ArLog::Normal, "%s: Task ended.", getName());
     }
   };
+
+  ...
+
+  void main(int argc, char** argv)
+  {
+    Aria::init();
+    ...
+    ArClientBase client;
+    ...
+    MyTask task(&client);
+    task.runAsync();
+    ...
+  }
   @endcode
 
-
-  Note one instance of this class is created for the
-  whole program, but new threads may be created at any time (whenever ARNL happens
-  to reach a goal), these threads are sharing access to the variables withhin the
-  class, and so this access is synchronized using a mutex. Make certain you do
-  not keep the mutex locked during any long running operations or operations of
-  indeterminate duration, and that in all logical paths through the code, the
-  mutex is eventually unlocked if locked.  
-
-
 */
-class RemoteArnlTask 
+class RemoteArnlTask : public virtual ArASyncTask
 {
 public:
 
-  RemoteArnlTask(ArClientBase *client,  ArArgumentParser *argParser = NULL) : 
+  RemoteArnlTask(const char *name, ArClientBase *client,  ArArgumentParser *argParser = NULL) : 
     // TODO let someone pass in their own ArClientHandlerRobotUpdates 
+    myName(name),
     myClient(client),
-    myClientConnectCB(this, &RemoteArnlTaskk::clientConnnected),
+    myRobotUpdateHandler(client),
+    myFirstCycleCB(this, &RemoteArnlTask::firstCycleCallback),
     myStatusChangedCB(this, &RemoteArnlTask::statusChanged)
 	{	
     myRobotUpdateHandler.addStatusChangedCB(&myStatusChangedCB);
-    myClient->addConnectCB(&myClientConnectCB);
+    //myClient->addConnectCB(&myClientConnectCB);
+    // doesn't have a connect callback, do this instead:
+    firstCycle = true;
+    myClient->addCycleCallback(&myFirstCycleCB);
   }
   
   ~RemoteArnlTask()
   {
     myRobotUpdateHandler.stopUpdates();
     myRobotUpdateHandler.remStatusChangedCB(&myStatusChangedCB);
+    myClient->remCycleCallback(&myFirstCycleCB);
   }
 
-  /** Override this method in your subclass. */
-  virtual const char *getName() const = 0;
+  virtual const char *getName() const  { return myName.c_str(); }
+
+  static bool stringStartsWith(const std::string& s, const std::string& prefix)
+  {
+    return s.compare(0, prefix.size(), prefix) == 0;
+  }
 
   class GoalInfo {
   public:
     bool hasName;
     std::string name;
-    bool checkName(const std::string &n) {
+    void setName(const std::string& n) {
+      name = n;
+      hasName = true;
+    }
+    bool checkName(const std::string &n) const {
       return (hasName && name == n);
     }
-    bool checkNamePrefix(const std::string &prefix) {
-      return (hasName && name.compare(prefix)); // TODO
+    bool checkNamePrefix(const std::string &prefix) const {
+      return (hasName && stringStartsWith(name, prefix)); 
     }
+    GoalInfo() : hasName(false) {}
+    GoalInfo(const std::string& goalName) : hasName(true), name(goalName) {}
   };
 
   /** Override this method in your subclass. */
@@ -127,21 +156,27 @@ public:
   }
 
   /** Override this method in your subclass. */
-  virtual void goingToHome(const GoalInfo& goalInfo) 
+  virtual void returningHome(const GoalInfo& goalInfo) 
   {
     ArLog::log(ArLog::Normal, "%s: Going to Home", getName());
   }
 
   /** Override this method in your subclass. */
-  virtual void homeReached(const GoalInfo& goalInfo) 
+  virtual void returnedHome(const GoalInfo& goalInfo) 
   {
-    ArLog::log(ArLog::Normal, "%s: Home Reached", getName());
+    ArLog::log(ArLog::Normal, "%s: Returned Home", getName());
   }
 
   /** Override this method in your subclass. */
-  virtual void homeFailed() 
+  virtual void homeFailed(const GoalInfo& goalInfo) 
   {
     ArLog::log(ArLog::Normal, "%s: Home Failed", getName());
+  }
+
+  /** Override this method in your subclass. */
+  virtual void touringToGoal(const GoalInfo& goalInfo) 
+  {
+    ArLog::log(ArLog::Normal, "%s: Touring to goal", getName());
   }
 
 
@@ -155,41 +190,109 @@ public:
     return myTmpData;
   }
 
+  ArClientBase *getClient() const { return myClient; }
+
+  void requestGoToGoal(const std::string& goalName)
+  {
+    myClient->requestOnceWithString("gotoGoal", goalName.c_str());
+  }
+
 protected:
+  std::string myName;
   ArClientBase *myClient;
   ArClientHandlerRobotUpdate myRobotUpdateHandler;
 
 private:
   ArClientHandlerRobotUpdate::RobotData myTmpData;
 
-  ArFunctorC<RemoteArnlTask> myClientConnectCB;
-  ArFunctorC<RemoteArnlTask> myStatusChangedCB;
+  ArFunctorC<RemoteArnlTask> myFirstCycleCB;
+  ArFunctor2C<RemoteArnlTask, const char*, const char*> myStatusChangedCB;
 
   void clientConnected() {
+    ArLog::log(ArLog::Normal, "%s: Requesting status updates from server...", getName());
     myRobotUpdateHandler.requestUpdates();
   }
 
-protected:
-  virtual void statusChanged(const char* m, const char *s) {
-    std::string mode = m;
-    std::string status = s;
-    GoalInfo g;
-    if(mode == "go to goal")
+  bool firstCycle;
+  void firstCycleCallback() {
+    if(firstCycle)
     {
-      if(status.substr(0, 10) == "Arrived at")
-        goalReached(g);
-    else if(status.substr(0, 6) == "Failed")
-      goalFailed(g);
+      clientConnected();
+      firstCycle = false;
     }
-    else if(mode == "Going home")
+  }
+
+  // TODO make this an event queue instead.
+  bool myStatusChanged;
+  ArCondition myStatusChangedCondition;
+  ArMutex myStatusMutex;
+
+  virtual void statusChanged(const char* m, const char *s) {
+    printf("RemoteArnlTask: server status changed.  mode=%s, status=%s", m, s);
+    myStatusChanged = true;
+    myStatusChangedCondition.signal();
+  }
+
+  virtual void *runThread(void*)
+  {
+    ArLog::log(ArLog::Normal, "%s: Now monitoring server status...", getName());
+    while(true)
     {
-      if(status == "Failed to get home")
+      myStatusChangedCondition.wait();
+      checkStatus();
+    }
+  }
+
+public:
+  void checkStatus()
+  {
+    myStatusMutex.lock();
+    if(!myStatusChanged)
+    {
+      myStatusMutex.unlock();
+      return;
+    }
+    myStatusChanged = false;
+    myStatusMutex.unlock();
+    myRobotUpdateHandler.lock();
+    const std::string mode = myRobotUpdateHandler.getMode();
+    const std::string status = myRobotUpdateHandler.getStatus();;
+    myRobotUpdateHandler.unlock();
+    //printf("checkStatus(): mode=%s, status=%s\n", mode.c_str(), status.c_str());
+    GoalInfo g;
+    if(mode == "Goto goal")
+    {
+      if(stringStartsWith(status, "Arrived at "))
+      {
+        g.setName(status.substr(strlen("Arrived at ")));
+        goalReached(g);
+      }
+      else if(stringStartsWith(status, "Failed"))
+      {
+        g.setName(status.substr(strlen("Failed to reach ")));
+        goalFailed(g);
+      }
+      // TODO are there other statuses?
+    }
+    else if(mode == "Go home")
+    {
+      g.setName("Home");
+      if(status == "Returned home")
+        returnedHome(g);
+      else if(status == "Returning home")
+        returningHome(g);
+      else if(status == "Failed to get home")
         homeFailed(g);
     }
-    // todo
+    else if(mode == "Touring goals")
+    {
+      if(stringStartsWith(status, "Touring to "))
+        g.setName(status.substr(strlen("Touring to ")));
+      touringToGoal(g);
+    }
+    // TODO more modes
   }
-    
-    
+  
 };
 
 #endif
