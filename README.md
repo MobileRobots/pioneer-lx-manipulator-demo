@@ -11,8 +11,11 @@ you see an error like "ArSocket::open: could not bind... Address already in
 use ... Can't open server on port 7272 yet, waiting")
 
 For example:
+
    demo -host 192.168.0.32 -ptzType dpptu 
+
 or:
+
    demo -host localhost -ptzType axis -serverPort 7070
 
 When ARNL reaches a goal starting with the prefix "Arm Demo" (or just the
