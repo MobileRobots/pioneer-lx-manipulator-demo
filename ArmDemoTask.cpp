@@ -20,7 +20,7 @@ namespace Kinova {
 
 
 ArmDemoTask::ArmDemoTask(ArClientBase *client, ArPTZ * _ptu) :
-  RemoteArnlTask("ArmDemo", client, NULL),
+  RemoteArnlTask("ArmDemoRemoteArnlTask", client, NULL),
   DEFAULT_MODE(CartesianPos),
   demoDone(false),
   demoWaitingToFinish(false),
@@ -323,18 +323,25 @@ void ArmDemoTask::goalReached(const GoalInfo& g)
 {
   if(g.checkNamePrefix("Arm Demo"))
   {
-    runDemo();
+    run_demo();
     getClient()->requestOnce("tourGoals");
   }
 }
 
-void ArmDemoTask::armDemoDone()
+void ArmDemoTask::arm_demo_done()
 {
-  // TODO park arms
   puts("arm demo done");
+  clear_all_arm_trajectories();
+  puts("parking arms");
+  park_arms();
 }
 
-void ArmDemoTask::runDemo() 
+void ArmDemoTask::park_arms()
+{
+  // TODO park arms
+}
+
+void ArmDemoTask::run_demo() 
 {
   /* Run */
 
@@ -351,7 +358,7 @@ void ArmDemoTask::runDemo()
   {
     if(demoDone)
     {
-      armDemoDone();
+      arm_demo_done();
       return;
     }
 

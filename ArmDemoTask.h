@@ -67,6 +67,7 @@ public:
   bool init_arms();
   void set_demo_mode(DemoMode newMode);
   void rehome_all_arms();
+  void park_arms();
   void ptu_look_at(float x, float y, float z);
   virtual ~ArmDemoTask();
   void armEENetDrawingCallback(ArServerClient *client, ArNetPacket *pkt);
@@ -81,8 +82,8 @@ private:
   void set_fingers_closed(Kinova::FingersPosition& f);
   void setup_torso_protection_zone_for_left_arm();
   void setup_torso_protection_zone_for_right_arm();
-  void runDemo();
-  void armDemoDone();
+  void run_demo();
+  void arm_demo_done();
   virtual void goalReached(const GoalInfo& g);
   virtual void touringToGoal(const GoalInfo& g);
 };

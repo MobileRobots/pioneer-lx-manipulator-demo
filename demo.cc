@@ -5,8 +5,9 @@
 #include "ArSystemStatus.h"
 #include "ArNetworking.h"
 #include "ArVideo.h"
-#include "ArmDemoTask.h"
 
+#include "ArmDemoTask.h"
+#include "KinectArVideoServer.h"
 
 // This is meant to run on the secondary computer ("top" or "torso" computer) of
 // a Pioneer LX Manipulator or similar robot.  It tries to connect any available
@@ -96,7 +97,6 @@ int main(int argc, char **argv)
     ptu->getMinPan(), ptu->getMaxPan(), 
     ptu->getMinTilt(), ptu->getMaxTilt() );
 
-  // test lookat:
 /*
   printf("TEST PANTILT\npan left %f\n", -45.0);
   ptu->panTilt(-45, 0);
@@ -109,39 +109,6 @@ int main(int argc, char **argv)
   ArUtil::sleep(5000);
   printf("tilt down -20\n");
   ptu->panTilt(0, -20);
-*/
-/*
-  puts("TEST LOOKAT");
-  ArUtil::sleep(5000);
-  puts("straigt ahead");
-  ptu_look_at_arm(*ptu, 0+armOffset[LEFT].x, -1+armOffset[LEFT].y, 0+armOffset[LEFT].z);
-  puts("");
-  ArUtil::sleep(5000);
-  puts("left");
-  ptu_look_at_arm(*ptu, 1+armOffset[LEFT].x, -1+armOffset[LEFT].y, 0+armOffset[LEFT].z);
-  puts("");
-  ArUtil::sleep(5000);
-  puts("right");
-  ptu_look_at_arm(*ptu, -1+armOffset[LEFT].x, -1+armOffset[LEFT].y, 0+armOffset[LEFT].z);
-  puts("");
-  ArUtil::sleep(5000);
-  puts("up right");
-  ptu_look_at_arm(*ptu, -1+armOffset[LEFT].x, -1+armOffset[LEFT].y, 1+armOffset[LEFT].z);
-  puts("");
-  ArUtil::sleep(5000);
-  puts("down left");
-  ptu_look_at_arm(*ptu, 1+armOffset[LEFT].x, -1+armOffset[LEFT].y, -1+armOffset[LEFT].z);
-  puts("");
-  ArUtil::sleep(5000);
-  puts("down right");
-  ptu_look_at_arm(*ptu, -1+armOffset[LEFT].x, -1+armOffset[LEFT].y, -1+armOffset[LEFT].z);
-  puts("");
-  ArUtil::sleep(5000);
-  puts("up left");
-  ptu_look_at_arm(*ptu, 1+armOffset[LEFT].x, -1+armOffset[LEFT].y, 1+armOffset[LEFT].z);
-  puts("");
-  ArUtil::sleep(5000);
-  Aria::exit(0);
 */
 
 
@@ -163,8 +130,43 @@ int main(int argc, char **argv)
     ArLog::log(ArLog::Terse, "Could not connect to arms.");
     Aria::exit(2);
   }
+  ArLog::log(ArLog::Normal, "Starting Arm Demo monitor task");
   armDemoTask.runAsync();
 
+  // test lookat by looking at points 1m ahead (-1 on y), 1m to each side (x), 1m up/down (z), etc.
+/*
+  puts("TEST LOOKAT");
+  ArUtil::sleep(5000);
+  puts("straigt ahead");
+  armDemoTask.ptu_look_at(0+armOffset[LEFT].x, -1+armOffset[LEFT].y, 0+armOffset[LEFT].z);
+  puts("");
+  ArUtil::sleep(5000);
+  puts("left");
+  armDemoTask.ptu_look_at(1+armOffset[LEFT].x, -1+armOffset[LEFT].y, 0+armOffset[LEFT].z);
+  puts("");
+  ArUtil::sleep(5000);
+  puts("right");
+  armDemoTask.ptu_look_at(-1+armOffset[LEFT].x, -1+armOffset[LEFT].y, 0+armOffset[LEFT].z);
+  puts("");
+  ArUtil::sleep(5000);
+  puts("up right");
+  armDemoTask.ptu_look_at(-1+armOffset[LEFT].x, -1+armOffset[LEFT].y, 1+armOffset[LEFT].z);
+  puts("");
+  ArUtil::sleep(5000);
+  puts("down left");
+  armDemoTask.ptu_look_at(1+armOffset[LEFT].x, -1+armOffset[LEFT].y, -1+armOffset[LEFT].z);
+  puts("");
+  ArUtil::sleep(5000);
+  puts("down right");
+  armDemoTask.ptu_look_at(-1+armOffset[LEFT].x, -1+armOffset[LEFT].y, -1+armOffset[LEFT].z);
+  puts("");
+  ArUtil::sleep(5000);
+  puts("up left");
+  armDemoTask.ptu_look_at(1+armOffset[LEFT].x, -1+armOffset[LEFT].y, 1+armOffset[LEFT].z);
+  puts("");
+  ArUtil::sleep(5000);
+  Aria::exit(0);
+*/
 
 
   /* Set up ArNetworking server */
@@ -196,13 +198,18 @@ int main(int argc, char **argv)
      "Wireless Signal", 10, ArSystemStatus::getWirelessLinkSignalFunctor(), "%d");
   ArServerHandlerCommMonitor commMonitorServer(&server);
 
-  // TODO create video server for Kinect
 
   ArServerInfoDrawings drawingsServer(&server);
   drawingsServer.addDrawing(
-    new ArDrawingData("polyDots", ArColor(255, 0, 0), 40, 50), "armEE",
+    new ArDrawingData("polyDots", ArColor(255, 0, 0), 120, 50), "armEE",
     new ArFunctor2C<ArmDemoTask, ArServerClient*, ArNetPacket*>(&armDemoTask, &ArmDemoTask::armEENetDrawingCallback));
 
+  /* Kinect */
+  KinectArVideoServer kinectVideoServer(&server);
+  kinectVideoServer.runAsync();
+  
+
+  /* Start server */
   printf("Opening ArNetworking server...\n");
   if(!openServer.open(&server))
   {
@@ -211,11 +218,16 @@ int main(int argc, char **argv)
     return 5;
   }
   server.runAsync();
-  std::cout << "ArNetworking server running on port " << server.getTcpPort() << std::endl;
+
+  std::cout 
+    << std::endl 
+    << "--------------------------------------------" << std::endl
+    << "ArNetworking server now running on port " << server.getTcpPort() << std::endl 
+    << "--------------------------------------------" << std::endl
+    << std::endl;
 
 
   /* Run */
-
   puts("Running...");
   client.run();
 
