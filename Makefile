@@ -31,7 +31,7 @@ LINK_SPECIAL_LIBUSB=-L$(FREENECT2_DIR)/../../depends/libusb/lib -rdynamic -lusb-
 OPENCV_LINK=-lopencv_core  -lopencv_imgproc #-lopencv_highgui
 FREENECT2_LINK=-L$(FREENECT2_DIR)/lib -lfreenect2 -lturbojpeg -lpthread -lOpenCL $(LINK_SPECIAL_LIBUSB) $(OPENCV_LINK)
 
-all: demo Example_CartesianControl
+all: demo Example_CartesianControl Example_AngularControl
 
 clean: 
 	-rm demo
@@ -44,7 +44,7 @@ clean:
 demo: demo.cc ArmDemoTask.o KinectArVideoServer.o 
 	$(CXX) -fPIC -g -o $@ -I$(KINOVA_INCLUDE_DIR) $(ARIA_INCLUDE) $(FREENECT2_INCLUDE) $^ $(KINOVA_LINK) $(ARIA_LINK) $(FREENECT2_LINK)
 
-Example_CartesianControl: Example_CartesianControl.cpp
+Example_%: Example_%.cpp
 	$(CXX) -fPIC -g -o $@ -I$(KINOVA_INCLUDE_DIR) $< $(KINOVA_LINK) -ldl
 
 
