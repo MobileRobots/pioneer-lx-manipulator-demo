@@ -338,9 +338,65 @@ void ArmDemoTask::arm_demo_done()
 
 void ArmDemoTask::park_arms()
 {
-  // TODO park arms
-}
 
+  Kinova::TrajectoryPoint cmd;
+  cmd.InitStruct();
+  cmd.Position.Type = Kinova::ANGULAR_POSITION;
+
+  // left arm
+  Kinova::SetActiveDevice(armList[LEFT]);
+  Kinova::EraseAllTrajectories();
+
+  // pre-park position, left arm
+  cmd.Position.Actuators.Actuator1 = 56.360; 
+  cmd.Position.Actuators.Actuator2 = 54.797;
+  cmd.Position.Actuators.Actuator3 = 227.607;
+  cmd.Position.Actuators.Actuator4 = 207.614;
+  cmd.Position.Actuators.Actuator5 = 28.722;
+  cmd.Position.Actuators.Actuator6 = 236.295;
+  set_fingers_closed(cmd.Position.Fingers);
+  Kinova::SendBasicTrajectory(cmd);
+
+  // park position, left arm
+  cmd.Position.Actuators.Actuator1 = 92.426;
+  cmd.Position.Actuators.Actuator2 = 45.609;
+  cmd.Position.Actuators.Actuator3 = 235.147;
+  cmd.Position.Actuators.Actuator4 = 204.273;
+  cmd.Position.Actuators.Actuator5 = 6.409;
+  cmd.Position.Actuators.Actuator6 = 286.159;
+  Kinova::SendBasicTrajectory(cmd);
+
+  // delay a bit
+  ArUtil::sleep(5000);
+
+  // right arm
+  Kinova::SetActiveDevice(armList[RIGHT]);
+  Kinova::EraseAllTrajectories();
+
+  // pre-park position, right arm
+  cmd.Position.Actuators.Actuator1 = 317.715;
+  cmd.Position.Actuators.Actuator2 = 293.638;
+  cmd.Position.Actuators.Actuator3 = 122.578;
+  cmd.Position.Actuators.Actuator4 = 122.033;
+  cmd.Position.Actuators.Actuator5 = 349.920;
+  cmd.Position.Actuators.Actuator6 = 289.153;
+  set_fingers_closed(cmd.Position.Fingers);
+  Kinova::SendBasicTrajectory(cmd);
+
+  // park position, right arm
+  cmd.Position.Actuators.Actuator1 = 280.864;
+  cmd.Position.Actuators.Actuator2 = 312.281;
+  cmd.Position.Actuators.Actuator3 = 119.559;
+  cmd.Position.Actuators.Actuator4 = 150.545;
+  cmd.Position.Actuators.Actuator5 = 357.204;
+  cmd.Position.Actuators.Actuator6 = 290.454;
+  Kinova::SendBasicTrajectory(cmd);
+
+  // delay a bit
+  ArUtil::sleep(5000);
+  
+}
+  
 void ArmDemoTask::run_demo() 
 {
   /* Run */

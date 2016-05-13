@@ -130,6 +130,8 @@ int main(int argc, char **argv)
     ArLog::log(ArLog::Terse, "Could not connect to arms.");
     Aria::exit(2);
   }
+  ArLog::log(ArLog::Normal, "Parking arms");
+  armDemoTask.park_arms();
   ArLog::log(ArLog::Normal, "Starting Arm Demo monitor task");
   armDemoTask.runAsync();
 
